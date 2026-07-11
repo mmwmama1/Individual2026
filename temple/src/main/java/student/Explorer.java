@@ -5,6 +5,7 @@ import game.ExplorationState;
 import game.NodeStatus;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedList;
@@ -46,25 +47,50 @@ public class Explorer {
      * <p>
      * A suggested first implementation that will always find the orb, but likely won't
      * receive a large bonus multiplier, is a depth-first search.
+     * <p>
+     * <b>Strategy used here.</b> Every tile that has been physically visited has its
+     * neighbours recorded, so we always know a subgraph of the cavern that has actually
+     * been walked (the "known graph"). Every neighbour that has been seen but not yet
+     * visited is a candidate destination on the "frontier". At each step we greedily pick
+     * the frontier tile with the smallest {@code getDistanceToTarget()} (the tile that,
+     * ignoring walls, is closest to the Orb) and walk to it, backtracking through the
+     * known graph if it is not directly adjacent to our current position. Because
+     * {@code getDistanceToTarget()} is an admissible heuristic (real graph distance can
+     * only ever be greater than or equal to grid distance, since walls only add detours),
+     * this greedy best-first strategy consistently steers the explorer towards the Orb
+     * and only backtracks when a dead end has been fully exhausted.
      *
      * @param state the information available at the current state
      */
     public void explore(ExplorationState state) {
+        // known.get(id) is non-null exactly for tiles we have physically stood on;
+        // it stores the neighbour information we saw while standing there.
         Map<Long, Collection<NodeStatus>> known = new HashMap<>();
+
+        // For every tile that has been discovered (as a neighbour of a visited tile)
+        // but not yet visited, remember one already-visited tile adjacent to it, so
+        // that we know how to walk there when it is chosen.
         Map<Long, Long> discoveredVia = new HashMap<>();
+
+        // Tiles that have been discovered but not yet visited, ordered by their
+        // (admissible) grid distance to the Orb - NodeStatus is Comparable on this value.
         PriorityQueue<NodeStatus> frontier = new PriorityQueue<>();
 
         long current = state.getCurrentLocation();
-        known.put(current, List.of());
+        known.put(current, List.of()); // placeholder; filled in on the first iteration below
 
         while (state.getDistanceToTarget() != 0) {
             recordNeighbours(state, current, known, discoveredVia, frontier);
 
             NodeStatus next = frontier.poll();
             while (next != null && known.containsKey(next.nodeID())) {
+                // Stale entry: this tile turned out to be reachable from more than one
+                // direction and was already visited via a different route. Skip it.
                 next = frontier.poll();
             }
             if (next == null) {
+                // Should never happen: the cavern is always fully connected, so the
+                // Orb is always reachable and the frontier cannot run dry first.
                 throw new IllegalStateException("Explorer ran out of places to go before finding the Orb.");
             }
 
@@ -75,6 +101,11 @@ public class Explorer {
         }
     }
 
+    /**
+     * Record the neighbours of the tile we are currently standing on ({@code current})
+     * into {@code known}, and add any newly-discovered neighbour to {@code frontier}
+     * (remembering, in {@code discoveredVia}, that it can be reached via {@code current}).
+     */
     private void recordNeighbours(ExplorationState state, long current,
                                    Map<Long, Collection<NodeStatus>> known,
                                    Map<Long, Long> discoveredVia,
@@ -91,6 +122,12 @@ public class Explorer {
         }
     }
 
+    /**
+     * Walk from {@code from} to {@code to} using only tiles already recorded in
+     * {@code known} (i.e. without discovering anything new), by finding the shortest
+     * such route with a breadth-first search and then following it one step at a time.
+     * Does nothing if {@code from} equals {@code to}.
+     */
     private void walk(ExplorationState state, long from, long to,
                        Map<Long, Collection<NodeStatus>> known) {
         for (long step : shortestKnownPath(from, to, known)) {
@@ -98,6 +135,12 @@ public class Explorer {
         }
     }
 
+    /**
+     * Return the sequence of tile IDs to move through (in order, not including
+     * {@code from} itself) to travel from {@code from} to {@code to}, using only
+     * edges between tiles already present in {@code known}. Returns an empty list
+     * if {@code from} equals {@code to}.
+     */
     private List<Long> shortestKnownPath(long from, long to, Map<Long, Collection<NodeStatus>> known) {
         if (from == to) {
             return List.of();
@@ -128,6 +171,8 @@ public class Explorer {
             path.addFirst(node);
             Long previous = cameFrom.get(node);
             if (previous == null) {
+                // Should never happen: "to" is always a tile we have already visited,
+                // so it must be reachable from "from" through the known graph.
                 throw new IllegalStateException("No known route from " + from + " to " + to);
             }
             node = previous;
@@ -155,6 +200,10 @@ public class Explorer {
      * <p>
      * You will always have enough time to escape using the shortest path from the starting
      * position to the exit, although this will not collect much gold.
+     * <p>
+     * <b>Not required for the individual assignment</b> (see the coursework brief and
+     * {@code game.GameState#run()}, which never calls this method outside the group
+     * assignment). Left unimplemented here for that reason.
      *
      * @param state the information available at the current state
      */
