@@ -355,7 +355,7 @@ public class GameState implements ExplorationState, EscapeState {
      * @return the player's current score
      */
     int getScore() {
-        return (int) computeBonusFactor();
+        return (int) (goldCollected * computeBonusFactor());
     }
 
     boolean getExploreSucceeded() {
