@@ -2,7 +2,21 @@ package student;
 
 import game.EscapeState;
 import game.ExplorationState;
+import game.NodeStatus;
 
+import java.util.ArrayDeque;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.PriorityQueue;
+import java.util.Queue;
+
+/**
+ * Contains Jeremy's strategies for exploring the cavern to find the Orb,
+ * and (for the group assignment) escaping the cavern afterwards.
+ */
 public class Explorer {
 
     /**
@@ -36,7 +50,89 @@ public class Explorer {
      * @param state the information available at the current state
      */
     public void explore(ExplorationState state) {
-        //TODO : Explore the cavern and find the orb
+        Map<Long, Collection<NodeStatus>> known = new HashMap<>();
+        Map<Long, Long> discoveredVia = new HashMap<>();
+        PriorityQueue<NodeStatus> frontier = new PriorityQueue<>();
+
+        long current = state.getCurrentLocation();
+        known.put(current, List.of());
+
+        while (state.getDistanceToTarget() != 0) {
+            recordNeighbours(state, current, known, discoveredVia, frontier);
+
+            NodeStatus next = frontier.poll();
+            while (next != null && known.containsKey(next.nodeID())) {
+                next = frontier.poll();
+            }
+            if (next == null) {
+                throw new IllegalStateException("Explorer ran out of places to go before finding the Orb.");
+            }
+
+            long via = discoveredVia.get(next.nodeID());
+            walk(state, current, via, known);
+            state.moveTo(next.nodeID());
+            current = next.nodeID();
+        }
+    }
+
+    private void recordNeighbours(ExplorationState state, long current,
+                                   Map<Long, Collection<NodeStatus>> known,
+                                   Map<Long, Long> discoveredVia,
+                                   PriorityQueue<NodeStatus> frontier) {
+        Collection<NodeStatus> neighbours = state.getNeighbours();
+        known.put(current, neighbours);
+
+        for (NodeStatus neighbour : neighbours) {
+            long id = neighbour.nodeID();
+            if (!known.containsKey(id) && !discoveredVia.containsKey(id)) {
+                discoveredVia.put(id, current);
+                frontier.add(neighbour);
+            }
+        }
+    }
+
+    private void walk(ExplorationState state, long from, long to,
+                       Map<Long, Collection<NodeStatus>> known) {
+        for (long step : shortestKnownPath(from, to, known)) {
+            state.moveTo(step);
+        }
+    }
+
+    private List<Long> shortestKnownPath(long from, long to, Map<Long, Collection<NodeStatus>> known) {
+        if (from == to) {
+            return List.of();
+        }
+
+        Map<Long, Long> cameFrom = new HashMap<>();
+        cameFrom.put(from, from);
+        Queue<Long> queue = new ArrayDeque<>();
+        queue.add(from);
+
+        while (!queue.isEmpty()) {
+            long node = queue.poll();
+            if (node == to) {
+                break;
+            }
+            for (NodeStatus neighbour : known.getOrDefault(node, List.of())) {
+                long id = neighbour.nodeID();
+                if (known.containsKey(id) && !cameFrom.containsKey(id)) {
+                    cameFrom.put(id, node);
+                    queue.add(id);
+                }
+            }
+        }
+
+        LinkedList<Long> path = new LinkedList<>();
+        long node = to;
+        while (node != from) {
+            path.addFirst(node);
+            Long previous = cameFrom.get(node);
+            if (previous == null) {
+                throw new IllegalStateException("No known route from " + from + " to " + to);
+            }
+            node = previous;
+        }
+        return path;
     }
 
     /**
