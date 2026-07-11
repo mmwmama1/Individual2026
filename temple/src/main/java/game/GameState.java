@@ -118,7 +118,7 @@ public class GameState implements ExplorationState, EscapeState {
         // TODO: In the error cases we should really pop something up!
         explore();
         if (!exploreSucceeded) return;
-        // escape(); The escape phase is not required in the individual assignment.
+        escape();
     }
 
     void explore() {

@@ -1,18 +1,23 @@
 package student;
 
+import game.Edge;
 import game.EscapeState;
 import game.ExplorationState;
+import game.Node;
 import game.NodeStatus;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.Queue;
+import java.util.Set;
 
 /**
  * Contains Jeremy's strategies for exploring the cavern to find the Orb,
@@ -201,13 +206,179 @@ public class Explorer {
      * You will always have enough time to escape using the shortest path from the starting
      * position to the exit, although this will not collect much gold.
      * <p>
-     * <b>Not required for the individual assignment</b> (see the coursework brief and
-     * {@code game.GameState#run()}, which never calls this method outside the group
-     * assignment). Left unimplemented here for that reason.
+     * <b>Strategy used here.</b> Pre-compute weighted shortest-path distances from the
+     * exit to every node (Dijkstra). Each step: pick up gold on the current tile; then
+     * either detour toward the highest-value gold pile that can still be reached and
+     * escaped from within the time limit, or otherwise take a safe neighbour on a shortest
+     * path to the exit.
      *
      * @param state the information available at the current state
      */
     public void escape(EscapeState state) {
-        //TODO: Escape from the cavern before time runs out. This is not required for individual assignment
+        Node exit = state.getExit();
+        Collection<Node> vertices = state.getVertices();
+        Map<Long, Integer> distToExit = dijkstraDistances(exit);
+
+        Node current = state.getCurrentNode();
+        while (!current.equals(exit)) {
+            collectGoldIfPresent(state);
+
+            Node next = chooseEscapeMove(state, current, distToExit, vertices);
+            state.moveTo(next);
+            current = state.getCurrentNode();
+        }
+
+        collectGoldIfPresent(state);
+    }
+
+    private void collectGoldIfPresent(EscapeState state) {
+        if (state.getCurrentNode().getTile().getGold() > 0) {
+            state.pickUpGold();
+        }
+    }
+
+    /**
+     * Choose the next node to move to: prefer a profitable gold detour when safe,
+     * otherwise follow a shortest weighted path toward the exit.
+     */
+    private Node chooseEscapeMove(EscapeState state, Node current,
+                                  Map<Long, Integer> distToExit, Collection<Node> vertices) {
+        int timeLeft = state.getTimeRemaining();
+        Map<Long, Integer> distFromCurrent = dijkstraDistances(current);
+
+        Node bestGoldTarget = null;
+        int bestGold = 0;
+        for (Node vertex : vertices) {
+            int gold = vertex.getTile().getGold();
+            if (gold <= 0) {
+                continue;
+            }
+            Integer toGold = distFromCurrent.get(vertex.getId());
+            Integer fromGold = distToExit.get(vertex.getId());
+            if (toGold == null || fromGold == null) {
+                continue;
+            }
+            if (toGold + fromGold <= timeLeft && gold > bestGold) {
+                bestGold = gold;
+                bestGoldTarget = vertex;
+            }
+        }
+
+        if (bestGoldTarget != null) {
+            Node step = firstStepOnShortestPath(current, bestGoldTarget);
+            if (step != null && isSafeMove(state, current, step, distToExit)) {
+                return step;
+            }
+        }
+
+        Node bestNeighbour = null;
+        int bestDist = Integer.MAX_VALUE;
+        for (Node neighbour : current.getNeighbours()) {
+            if (!isSafeMove(state, current, neighbour, distToExit)) {
+                continue;
+            }
+            int dist = distToExit.getOrDefault(neighbour.getId(), Integer.MAX_VALUE);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestNeighbour = neighbour;
+            }
+        }
+
+        if (bestNeighbour == null) {
+            throw new IllegalStateException("No safe move toward the exit with time remaining.");
+        }
+        return bestNeighbour;
+    }
+
+    /**
+     * Return true if moving from {@code from} to {@code to} leaves enough time to reach the exit.
+     */
+    private boolean isSafeMove(EscapeState state, Node from, Node to, Map<Long, Integer> distToExit) {
+        int edgeCost = from.getEdge(to).length();
+        int timeAfterMove = state.getTimeRemaining() - edgeCost;
+        Integer remainingPath = distToExit.get(to.getId());
+        return remainingPath != null && timeAfterMove >= remainingPath;
+    }
+
+    /**
+     * Return the first step on a shortest weighted path from {@code from} to {@code to}.
+     */
+    private Node firstStepOnShortestPath(Node from, Node to) {
+        if (from.equals(to)) {
+            return null;
+        }
+
+        Map<Long, Node> predecessor = new HashMap<>();
+        Map<Long, Integer> dist = new HashMap<>();
+        PriorityQueue<Node> frontier = new PriorityQueue<>(
+                Comparator.comparingInt(n -> dist.getOrDefault(n.getId(), Integer.MAX_VALUE)));
+
+        dist.put(from.getId(), 0);
+        frontier.add(from);
+        Set<Long> settled = new HashSet<>();
+
+        while (!frontier.isEmpty()) {
+            Node node = frontier.poll();
+            if (!settled.add(node.getId())) {
+                continue;
+            }
+            if (node.equals(to)) {
+                break;
+            }
+
+            int nodeDist = dist.get(node.getId());
+            for (Edge edge : node.getExits()) {
+                Node neighbour = edge.getOther(node);
+                int newDist = nodeDist + edge.length();
+                if (newDist < dist.getOrDefault(neighbour.getId(), Integer.MAX_VALUE)) {
+                    dist.put(neighbour.getId(), newDist);
+                    predecessor.put(neighbour.getId(), node);
+                    frontier.add(neighbour);
+                }
+            }
+        }
+
+        if (!predecessor.containsKey(to.getId()) && !from.equals(to)) {
+            return null;
+        }
+
+        Node step = to;
+        while (predecessor.get(step.getId()) != null && !predecessor.get(step.getId()).equals(from)) {
+            step = predecessor.get(step.getId());
+        }
+        return step;
+    }
+
+    /**
+     * Run Dijkstra's algorithm from {@code source} and return minimum weighted distances
+     * to every reachable node (keyed by node id).
+     */
+    private Map<Long, Integer> dijkstraDistances(Node source) {
+        Map<Long, Integer> dist = new HashMap<>();
+        PriorityQueue<Node> frontier = new PriorityQueue<>(
+                Comparator.comparingInt(n -> dist.getOrDefault(n.getId(), Integer.MAX_VALUE)));
+        Set<Long> settled = new HashSet<>();
+
+        dist.put(source.getId(), 0);
+        frontier.add(source);
+
+        while (!frontier.isEmpty()) {
+            Node node = frontier.poll();
+            if (!settled.add(node.getId())) {
+                continue;
+            }
+
+            int nodeDist = dist.get(node.getId());
+            for (Edge edge : node.getExits()) {
+                Node neighbour = edge.getOther(node);
+                int newDist = nodeDist + edge.length();
+                if (newDist < dist.getOrDefault(neighbour.getId(), Integer.MAX_VALUE)) {
+                    dist.put(neighbour.getId(), newDist);
+                    frontier.add(neighbour);
+                }
+            }
+        }
+
+        return dist;
     }
 }
