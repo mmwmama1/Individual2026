@@ -1,0 +1,6 @@
+{
+// Preview button configuration
+  "preview": {
+    "Viewer": "https://{{domain3000}}/"
+  }
+}
